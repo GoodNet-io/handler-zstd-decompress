@@ -25,10 +25,11 @@
 ///   msg_id 0x0700 — plain JSON-RPC (web_api_proxy's existing contract)
 ///
 /// Config (TOML / JSON section "zstd_decompress"):
-///   compressed_msg_id  uint32  default 0x0701
-///   plain_msg_id       uint32  default 0x0700
-///   target_ns          string  default "gnet-v1"
-///   max_decompressed   uint32  bytes, default 4 MiB
+///   compressed_msg_id    uint32  default 0x0701
+///   plain_msg_id         uint32  default 0x0700
+///   target_ns            string  default "gnet-v1"
+///   max_decompressed     uint32  bytes, default 4 MiB
+///   encode_target_msg_id string  "fixed" (default) or "inband"
 
 #pragma once
 
@@ -36,6 +37,7 @@
 #include <cstdint>
 #include <string>
 
+#include <sdk/extensions/compress.h>
 #include <sdk/handler.h>
 #include <sdk/host_api.h>
 #include <sdk/types.h>
@@ -52,6 +54,12 @@ struct Config {
     std::uint32_t plain_msg_id      = kDefaultPlainMsgId;
     std::string   target_ns         = kDefaultTargetNs;
     std::uint32_t max_decompressed  = kDefaultMaxDecompressed;
+    /// "fixed"  — always inject decompressed payload under plain_msg_id
+    ///            (current behaviour).
+    /// "inband" — first 4 bytes of decompressed payload are big-endian
+    ///            uint32 target msg_id; strip them before inject; use
+    ///            extracted id instead of plain_msg_id.
+    std::string   encode_target_msg_id = "fixed";
 };
 
 class ZstdDecompressHandler {
@@ -77,11 +85,18 @@ public:
         return frames_err_.load(std::memory_order_relaxed);
     }
 
+    // gn.compress extension surface — registered by GN_HANDLER_PLUGIN via
+    // maybe_register_extension when the concept is satisfied.
+    static constexpr const char*    extension_name()    noexcept { return GN_COMPRESS_EXT; }
+    static constexpr std::uint32_t  extension_version() noexcept { return GN_COMPRESS_API_VERSION; }
+    const void* extension_vtable() const noexcept { return &compress_vtable_; }
+
 private:
     const host_api_t*     api_;
     Config                cfg_;
     std::atomic<uint64_t> frames_ok_{0};
     std::atomic<uint64_t> frames_err_{0};
+    gn_compress_api_t     compress_vtable_{};
 };
 
 }  // namespace gn::handler::zstd_decompress
