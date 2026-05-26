@@ -21,12 +21,18 @@
 /// path is unaffected; the browser JS SDK compresses before sending.
 ///
 /// Wire contract:
-///   msg_id 0x0701 — zstd-compressed frame; payload = raw zstd data
-///   msg_id 0x0700 — plain JSON-RPC (web_api_proxy's existing contract)
+///   msg_id 0x0701 — zstd-compressed frame; payload is one of:
+///     "fixed"  mode: raw ZSTD bytes (target routed to plain_msg_id)
+///     "inband" mode: [1B algo=0x01][4B target_msg_id BE][ZSTD bytes]
+///              See docs/contracts/compressed-object.en.md §2.
+///   msg_id 0x0700 — default plain target.  Chosen to match common
+///                   web-api-proxy deployments but the handler is
+///                   application-agnostic; plain_msg_id is operator-
+///                   configurable to any non-reserved value.
 ///
 /// Config (TOML / JSON section "zstd_decompress"):
 ///   compressed_msg_id    uint32  default 0x0701
-///   plain_msg_id         uint32  default 0x0700
+///   plain_msg_id         uint32  default 0x0700  (used only in "fixed" mode)
 ///   target_ns            string  default "gnet-v1"
 ///   max_decompressed     uint32  bytes, default 4 MiB
 ///   encode_target_msg_id string  "fixed" (default) or "inband"
@@ -51,14 +57,19 @@ inline constexpr const char*   kDefaultTargetNs         = "gnet-v1";
 
 struct Config {
     std::uint32_t compressed_msg_id = kDefaultCompressedMsgId;
-    std::uint32_t plain_msg_id      = kDefaultPlainMsgId;
+    std::uint32_t plain_msg_id      = kDefaultPlainMsgId;  ///< target msg_id for
+                                                            ///< decompressed payload
+                                                            ///< in "fixed" mode; pick
+                                                            ///< any non-reserved value
+                                                            ///< (see system-handlers.en.md
+                                                            ///< for the reserved range).
     std::string   target_ns         = kDefaultTargetNs;
     std::uint32_t max_decompressed  = kDefaultMaxDecompressed;
-    /// "fixed"  — always inject decompressed payload under plain_msg_id
-    ///            (current behaviour).
-    /// "inband" — first 4 bytes of decompressed payload are big-endian
-    ///            uint32 target msg_id; strip them before inject; use
-    ///            extracted id instead of plain_msg_id.
+    /// "fixed"  — always inject decompressed payload under plain_msg_id.
+    /// "inband" — raw payload carries a 5-byte header before the ZSTD data:
+    ///            [0]=algo byte (0x01=ZSTD) [1..4]=target msg_id BE.
+    ///            Header is read from the raw GNET payload, NOT from the
+    ///            decompressed bytes.  See compressed-object.en.md §2.
     std::string   encode_target_msg_id = "fixed";
 };
 

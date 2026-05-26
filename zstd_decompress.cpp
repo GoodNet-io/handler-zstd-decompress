@@ -60,11 +60,36 @@ gn_propagation_t ZstdDecompressHandler::handle_message(
     const gn_message_t& env) {
 
     const std::uint8_t* src  = env.payload;
-    const std::size_t   srcN = env.payload_size;
+    std::size_t         srcN = env.payload_size;
 
     if (src == nullptr || srcN == 0) {
         frames_err_.fetch_add(1, std::memory_order_relaxed);
         return GN_PROPAGATION_CONSUMED;
+    }
+
+    // Resolve routing target; in "inband" mode parse from raw payload
+    // BEFORE decompression: [0]=algo [1..4]=target_msg_id BE [5..]=ZSTD.
+    // See docs/contracts/compressed-object.en.md §2.
+    std::uint32_t target_msg_id = cfg_.plain_msg_id;
+    if (cfg_.encode_target_msg_id == "inband") {
+        if (srcN < GN_COMPRESS_ENV_HDR_SIZE) {
+            GN_LOGF_WARN(api_,
+                "zstd_decompress: inband envelope too short ({} bytes)", srcN);
+            frames_err_.fetch_add(1, std::memory_order_relaxed);
+            return GN_PROPAGATION_CONSUMED;
+        }
+        if (src[0] != GN_COMPRESS_ENV_ZSTD) {
+            GN_LOGF_WARN(api_,
+                "zstd_decompress: unknown algo byte 0x{:02x}", src[0]);
+            frames_err_.fetch_add(1, std::memory_order_relaxed);
+            return GN_PROPAGATION_CONSUMED;
+        }
+        target_msg_id = (static_cast<std::uint32_t>(src[1]) << 24) |
+                        (static_cast<std::uint32_t>(src[2]) << 16) |
+                        (static_cast<std::uint32_t>(src[3]) <<  8) |
+                         static_cast<std::uint32_t>(src[4]);
+        src  += GN_COMPRESS_ENV_HDR_SIZE;
+        srcN -= GN_COMPRESS_ENV_HDR_SIZE;
     }
 
     const std::uint32_t cap = cfg_.max_decompressed;
@@ -141,25 +166,8 @@ gn_propagation_t ZstdDecompressHandler::handle_message(
         dst.resize(written);
     }
 
-    // Resolve inject parameters — may be overridden by inband routing.
-    std::uint32_t        target_msg_id = cfg_.plain_msg_id;
     const std::uint8_t*  inject_data   = dst.data();
-    std::size_t          inject_size   = dst.size();
-
-    if (cfg_.encode_target_msg_id == "inband") {
-        if (dst.size() < 4) {
-            GN_LOGF_WARN(api_, "zstd_decompress: inband: decompressed payload too short ({} bytes)",
-                         dst.size());
-            frames_err_.fetch_add(1, std::memory_order_relaxed);
-            return GN_PROPAGATION_CONSUMED;
-        }
-        target_msg_id = (static_cast<std::uint32_t>(dst[0]) << 24) |
-                        (static_cast<std::uint32_t>(dst[1]) << 16) |
-                        (static_cast<std::uint32_t>(dst[2]) << 8)  |
-                         static_cast<std::uint32_t>(dst[3]);
-        inject_data = dst.data() + 4;
-        inject_size = dst.size() - 4;
-    }
+    const std::size_t    inject_size   = dst.size();
 
     const char* ns = cfg_.target_ns.empty() ? nullptr : cfg_.target_ns.c_str();
     const gn_result_t rc =
