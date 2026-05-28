@@ -28,7 +28,7 @@ ZstdDecompressHandler::ZstdDecompressHandler(const host_api_t* api)
                                    size_t*        out_sz,
                                    int            level) -> gn_result_t {
         const std::size_t bound = ZSTD_compressBound(in_sz);
-        if (out_cap < bound) return GN_ERR_PAYLOAD_TOO_LARGE;
+        if (out_cap < bound) return GN_ERR_OUTPUT_TOO_SMALL;
         const std::size_t r = ZSTD_compress(out, out_cap, in, in_sz, level);
         if (ZSTD_isError(r)) return GN_ERR_INVALID_ENVELOPE;
         *out_sz = r;
@@ -48,7 +48,7 @@ ZstdDecompressHandler::ZstdDecompressHandler(const host_api_t* api)
         const unsigned long long expected = ZSTD_getFrameContentSize(in, in_sz);
         if (expected == ZSTD_CONTENTSIZE_ERROR) return GN_ERR_INVALID_ENVELOPE;
         if (expected != ZSTD_CONTENTSIZE_UNKNOWN && expected > out_cap)
-            return GN_ERR_PAYLOAD_TOO_LARGE;
+            return GN_ERR_OUTPUT_TOO_SMALL;
         const std::size_t r = ZSTD_decompress(out, out_cap, in, in_sz);
         if (ZSTD_isError(r)) return GN_ERR_INVALID_ENVELOPE;
         *out_sz = r;
